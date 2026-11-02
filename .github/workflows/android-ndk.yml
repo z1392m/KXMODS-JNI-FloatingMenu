@@ -1,90 +1,44 @@
-name: Build KXMODS Android JNI libraries
+name: Build Android ARM64 library
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
-
-permissions:
-  contents: read
+    branches: [ "main", "master" ]
 
 jobs:
   build:
-    name: Build ${{ matrix.abi }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        abi:
-          - arm64-v8a
-          - armeabi-v7a
-
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # Use the Android SDK/NDK already installed on the GitHub Ubuntu runner.
-      # This avoids the sdkmanager "Failed to find package 'tools'" bootstrap error.
-      - name: Locate installed Android SDK and NDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          echo "Using Android SDK: $SDK"
-          if [ ! -d "$SDK/ndk" ]; then
-            echo "No NDK directory found under $SDK/ndk"
-            ls -la "$SDK" || true
-            exit 1
-          fi
-          NDK_VERSION="$(find "$SDK/ndk" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)"
-          if [ -z "$NDK_VERSION" ]; then
-            echo "No installed NDK version found."
-            ls -la "$SDK/ndk" || true
-            exit 1
-          fi
-          NDK="$SDK/ndk/$NDK_VERSION"
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
-          echo "Selected NDK: $NDK_VERSION"
-          test -f "$NDK/build/cmake/android.toolchain.cmake"
-
-      - name: Install Ninja
+      - name: Install CMake and Ninja
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build
+          sudo apt-get install -y cmake ninja-build
 
-      - name: Show build tools
+      - name: Configure Android ARM64
         run: |
-          cmake --version
-          ninja --version
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" --version
-
-      - name: Configure ${{ matrix.abi }}
-        run: |
-          cmake -S app/src/main/cpp -B "build/${{ matrix.abi }}" -G Ninja \
+          cmake -S . -B build \
+            -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI="${{ matrix.abi }}" \
-            -DANDROID_PLATFORM=android-23 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$GITHUB_WORKSPACE/output/${{ matrix.abi }}"
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_BUILD_TYPE=Release
 
-      - name: Compile shared library
-        run: cmake --build "build/${{ matrix.abi }}" --config Release --parallel 2
+      - name: Build
+        run: cmake --build build --parallel
 
-      - name: Verify output
+      - name: Package library
         run: |
-          set -e
-          test -f "output/${{ matrix.abi }}/libKXModsMenu.so"
-          file "output/${{ matrix.abi }}/libKXModsMenu.so"
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -h \
-            "output/${{ matrix.abi }}/libKXModsMenu.so"
+          mkdir -p output
+          cp build/libkovak.so output/libkovak.so
+          cp src/KovakMenu.h output/KovakMenu.h
 
-      - name: Upload compiled library
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: KXMODS-${{ matrix.abi }}
-          path: output/${{ matrix.abi }}/libKXModsMenu.so
+          name: kovak-android-arm64
+          path: output/
           if-no-files-found: error
-          retention-days: 14
           
