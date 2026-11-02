@@ -1,46 +1,88 @@
 #include <jni.h>
 #include <atomic>
 #include <string>
+#include <sstream>
 
 namespace {
-    std::atomic_bool features[3] = {
-        ATOMIC_VAR_INIT(false), // Barrett UI state
-        ATOMIC_VAR_INIT(false), // RPG UI state
-        ATOMIC_VAR_INIT(false)  // Speed UI state
+    // UI state only. These values do not alter game memory or gameplay.
+    std::atomic_bool g_features[3] = {
+        false, false, false
     };
+    std::atomic_bool g_initialized{false};
 
-    const char* names[3] = {"Barrett", "RPG", "Speed"};
+    bool validId(jint id) {
+        return id >= 0 && id < 3;
+    }
+
+    const char* featureName(int id) {
+        switch (id) {
+            case 0: return "Barrett";
+            case 1: return "RPG";
+            case 2: return "Speed";
+            default: return "Unknown";
+        }
+    }
+
+    jstring toJString(JNIEnv* env, const std::string& value) {
+        return env->NewStringUTF(value.c_str());
+    }
 }
 
-extern "C" JNIEXPORT void JNICALL
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_raacheat_cloneinjector_NativeMenu_nativeInit(JNIEnv*, jclass) {
+    g_initialized.store(true);
+    return JNI_TRUE;
+}
+
+extern "C"
+JNIEXPORT void JNICALL
 Java_com_raacheat_cloneinjector_NativeMenu_nativeSetFeature(
         JNIEnv*, jclass, jint id, jboolean enabled) {
-    if (id >= 0 && id < 3) {
-        features[id].store(enabled == JNI_TRUE);
-    }
+    if (!validId(id)) return;
+    g_features[id].store(enabled == JNI_TRUE);
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
+extern "C"
+JNIEXPORT jboolean JNICALL
 Java_com_raacheat_cloneinjector_NativeMenu_nativeGetFeature(
         JNIEnv*, jclass, jint id) {
-    if (id < 0 || id >= 3) return JNI_FALSE;
-    return features[id].load() ? JNI_TRUE : JNI_FALSE;
+    if (!validId(id)) return JNI_FALSE;
+    return g_features[id].load() ? JNI_TRUE : JNI_FALSE;
 }
 
-extern "C" JNIEXPORT jstring JNICALL
+extern "C"
+JNIEXPORT jstring JNICALL
 Java_com_raacheat_cloneinjector_NativeMenu_nativeGetStatus(
         JNIEnv* env, jclass) {
-    std::string result;
+    std::ostringstream out;
+    out << "KXMODS JNI 1.2 | ";
     for (int i = 0; i < 3; ++i) {
-        if (i) result += "\n";
-        result += names[i];
-        result += features[i].load() ? ": ON" : ": OFF";
+        if (i) out << " | ";
+        out << featureName(i) << "="
+            << (g_features[i].load() ? "ON" : "OFF");
     }
-    return env->NewStringUTF(result.c_str());
+    return toJString(env, out.str());
 }
 
-extern "C" JNIEXPORT void JNICALL
+extern "C"
+JNIEXPORT void JNICALL
 Java_com_raacheat_cloneinjector_NativeMenu_nativeReset(
         JNIEnv*, jclass) {
-    for (auto& feature : features) feature.store(false);
+    for (auto& feature : g_features) feature.store(false);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_raacheat_cloneinjector_NativeMenu_nativeRelease(
+        JNIEnv*, jclass) {
+    for (auto& feature : g_features) feature.store(false);
+    g_initialized.store(false);
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_raacheat_cloneinjector_NativeMenu_nativeGetVersion(
+        JNIEnv* env, jclass) {
+    return toJString(env, "KXMODS JNI 1.2");
 }
