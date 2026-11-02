@@ -23,24 +23,42 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK and CMake
+      # Use the Android SDK/NDK already installed on the GitHub Ubuntu runner.
+      # This avoids the sdkmanager "Failed to find package 'tools'" bootstrap error.
+      - name: Locate installed Android SDK and NDK
+        shell: bash
         run: |
-          sdkmanager --install "ndk;27.2.12479018" "cmake;3.22.1"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "Using Android SDK: $SDK"
+          if [ ! -d "$SDK/ndk" ]; then
+            echo "No NDK directory found under $SDK/ndk"
+            ls -la "$SDK" || true
+            exit 1
+          fi
+          NDK_VERSION="$(find "$SDK/ndk" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)"
+          if [ -z "$NDK_VERSION" ]; then
+            echo "No installed NDK version found."
+            ls -la "$SDK/ndk" || true
+            exit 1
+          fi
+          NDK="$SDK/ndk/$NDK_VERSION"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "Selected NDK: $NDK_VERSION"
+          test -f "$NDK/build/cmake/android.toolchain.cmake"
 
       - name: Install Ninja
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build
+
+      - name: Show build tools
+        run: |
+          cmake --version
+          ninja --version
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" --version
 
       - name: Configure ${{ matrix.abi }}
         run: |
@@ -56,8 +74,11 @@ jobs:
 
       - name: Verify output
         run: |
+          set -e
           test -f "output/${{ matrix.abi }}/libKXModsMenu.so"
           file "output/${{ matrix.abi }}/libKXModsMenu.so"
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -h \
+            "output/${{ matrix.abi }}/libKXModsMenu.so"
 
       - name: Upload compiled library
         uses: actions/upload-artifact@v4
@@ -66,3 +87,4 @@ jobs:
           path: output/${{ matrix.abi }}/libKXModsMenu.so
           if-no-files-found: error
           retention-days: 14
+          
